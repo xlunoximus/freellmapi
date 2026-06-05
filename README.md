@@ -25,6 +25,7 @@ Aggregate the free tiers from Google, Groq, Cerebras, SambaNova, NVIDIA, Mistral
 - [Not yet supported](#not-yet-supported)
 - [Quick start](#quick-start)
 - [Docker](#docker)
+- [Desktop app](#desktop-app)
 - [Using the API](#using-the-api)
 - [Screenshots](#screenshots)
 - [How it works](#how-it-works)
@@ -181,6 +182,22 @@ By default the container's port is bound to `127.0.0.1` (localhost only). To rea
 SQLite data is stored in the `freellmapi-data` volume at `/app/server/data`. Keep the same `.env` `ENCRYPTION_KEY` and volume when upgrading, because provider keys are encrypted at rest.
 
 More Docker operations and examples live in [docker/README.md](./docker/README.md).
+
+## Desktop app
+
+A native menu-bar app for macOS (Windows config included, untested) lives in
+[`desktop/`](./desktop): the entire router + dashboard running locally from your
+tray, with a glass popover showing live request stats. No published binaries —
+it builds from this repo in a few minutes:
+
+```bash
+npm install
+npm run desktop:dist        # macOS: desktop/dist-electron/FreeLLMAPI-…-arm64.dmg
+npm run desktop:dist:win    # Windows installer (untested — PRs welcome)
+```
+
+Locally built apps launch without Gatekeeper/SmartScreen warnings — no code
+signing involved. Full instructions in [desktop/README.md](./desktop/README.md).
 
 ## Using the API
 

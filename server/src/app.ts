@@ -82,8 +82,12 @@ export function createApp() {
   // Error handler (for API routes)
   app.use(errorHandler);
 
-  // Serve client static files (after API error handler)
-  const clientDist = path.resolve(__dirname, '../../client/dist');
+  // Serve client static files (after API error handler). CLIENT_DIST lets
+  // embedders relocate the built dashboard (e.g. the desktop app ships it in
+  // extraResources, where the __dirname-relative path can't reach).
+  const clientDist = process.env.CLIENT_DIST
+    ? path.resolve(process.env.CLIENT_DIST)
+    : path.resolve(__dirname, '../../client/dist');
   app.use(express.static(clientDist));
   // SPA fallback — serve index.html for non-API routes
   app.use((req, res, next) => {
