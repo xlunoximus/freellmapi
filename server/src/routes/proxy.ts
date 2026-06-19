@@ -998,6 +998,7 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
           res.setHeader('Cache-Control', 'no-cache');
           res.setHeader('Connection', 'keep-alive');
           res.setHeader('X-Routed-Via', `${route.platform}/${route.modelId}`);
+          res.setHeader('X-Routed-Via-Key', `${route.keyId}`);
           if (attempt > 0) res.setHeader('X-Fallback-Attempts', String(attempt));
           headerSent = true;
           for (const p of preamble) res.write(`data: ${JSON.stringify(p)}\n\n`);
@@ -1277,6 +1278,7 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
         if (handoffMode !== 'off' && sessionKey) recordSuccessfulModel({ sessionKey, modelKey });
 
         res.setHeader('X-Routed-Via', `${route.platform}/${route.modelId}`);
+        res.setHeader('X-Routed-Via-Key', `${route.keyId}`);
         if (attempt > 0) res.setHeader('X-Fallback-Attempts', String(attempt));
         // Repair double-encoded tool arguments against the request's tool
         // schemas (e.g. GLM emitting an array parameter as a JSON string),

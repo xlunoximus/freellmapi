@@ -185,3 +185,102 @@ describe('Router', () => {
     });
   });
 });
+
+describe('Router - Multi-key round-robin', () => {
+  beforeEach(() => {
+    const db = getDb();
+    setRoutingStrategy('priority');
+    db.prepare('DELETE FROM api_keys').run();
+    db.prepare("DELETE FROM settings WHERE key = 'active_profile_id'").run();
+    // Ensure we have a groq model with known id
+    const models = db.prepare("SELECT id, model_id FROM models WHERE platform = 'groq' ORDER BY intelligence_rank ASC LIMIT 1").get() as any;
+    if (!models) return;
+    // Set ALL models to same priority (1) to make routing deterministic by key_id
+    const update = db.prepare('UPDATE fallback_config SET priority = 1 WHERE model_db_id = ?');
+    for (const m of db.prepare('SELECT id FROM models').all() as any[]) {
+      update.run(m.id);
+    }
+  });
+
+  it('should round-robin between multiple keys for the same platform', () => {
+    const db = getDb();
+    const groqModel = db.prepare("SELECT id FROM models WHERE platform = 'groq' ORDER BY intelligence_rank ASC LIMIT 1").get() as any;
+    if (!groqModel) return; // skip if no groq model
+
+    // Add 3 keys for the same platform
+    const key1 = encrypt('groq-key-1');
+    db.prepare(`INSERT INTO api_keys (platform, label, encrypted_key, iv, auth_tag, status, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run('groq', 'key1', key1.encrypted, key1.iv, key1.authTag, 'healthy', 1);
+
+    const key2 = encrypt('groq-key-2');
+    db.prepare(`INSERT INTO api_keys (platform, label, encrypted_key, iv, auth_tag, status, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run('groq', 'key2', key2.encrypted, key2.iv, key2.authTag, 'healthy', 1);
+
+    const key3 = encrypt('groq-key-3');
+    db.prepare(`INSERT INTO api_keys (platform, label, encrypted_key, iv, auth_tag, status, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run('groq', 'key3', key3.encrypted, key3.iv, key3.authTag, 'healthy', 1);
+
+    // Three consecutive calls should rotate through all 3 keys
+    const r1 = routeRequest();
+    expect(r1.platform).toBe('groq');
+    expect(r1.apiKey).toBe('groq-key-1');
+
+    const r2 = routeRequest();
+    expect(r2.apiKey).toBe('groq-key-2');
+
+    const r3 = routeRequest();
+    expect(r3.apiKey).toBe('groq-key-3');
+
+    // Fourth call wraps back to key 1
+    const r4 = routeRequest();
+    expect(r4.apiKey).toBe('groq-key-1');
+  });
+
+  it('should skip failed keys and use the next available one for same platform', () => {
+    const db = getDb();
+    const groqModel = db.prepare("SELECT id FROM models WHERE platform = 'groq' ORDER BY intelligence_rank ASC LIMIT 1").get() as any;
+    if (!groqModel) return;
+
+    // Add 2 keys — one will be failed/cooldowned
+    const key1 = encrypt('groq-key-1');
+    db.prepare(`INSERT INTO api_keys (platform, label, encrypted_key, iv, auth_tag, status, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run('groq', 'key1', key1.encrypted, key1.iv, key1.authTag, 'healthy', 1);
+
+    const key2 = encrypt('groq-key-2');
+    db.prepare(`INSERT INTO api_keys (platform, label, encrypted_key, iv, auth_tag, status, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run('groq', 'key2', key2.encrypted, key2.iv, key2.authTag, 'healthy', 1);
+
+    // First call gets key 1
+    const r1 = routeRequest();
+    expect(r1.apiKey).toBe('groq-key-1');
+
+    // Second call with key 1 skipped — should get key 2
+    const skipKeys = new Set<string>();
+    skipKeys.add(`groq:${r1.modelId}:${r1.keyId}`);
+    const r2 = routeRequest(1000, skipKeys);
+    expect(r2.apiKey).toBe('groq-key-2');
+  });
+
+  it('should distribute keys across the chain when multiple platforms have keys', () => {
+    const db = getDb();
+
+    // Add keys for both platforms
+    const googleKey = encrypt('google-key');
+    db.prepare(`INSERT INTO api_keys (platform, label, encrypted_key, iv, auth_tag, status, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run('google', 'gk', googleKey.encrypted, googleKey.iv, googleKey.authTag, 'healthy', 1);
+
+    const groqKey1 = encrypt('groq-key-a');
+    db.prepare(`INSERT INTO api_keys (platform, label, encrypted_key, iv, auth_tag, status, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run('groq', 'gk1', groqKey1.encrypted, groqKey1.iv, groqKey1.authTag, 'healthy', 1);
+
+    const groqKey2 = encrypt('groq-key-b');
+    db.prepare(`INSERT INTO api_keys (platform, label, encrypted_key, iv, auth_tag, status, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run('groq', 'gk2', groqKey2.encrypted, groqKey2.iv, groqKey2.authTag, 'healthy', 1);
+
+    // Google is higher priority, so first call gets google
+    // (only has 1 key, so it gets that one)
+    const r1 = routeRequest();
+    expect(r1.platform).toBe('google');
+    expect(r1.apiKey).toBe('google-key');
+  });
+});
