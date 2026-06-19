@@ -85,6 +85,7 @@ analyticsRouter.get('/by-model', (req: Request, res: Response) => {
     SELECT
       r.platform,
       r.model_id,
+      r.key_id,
       m.display_name,
       COUNT(*) as requests,
       SUM(CASE WHEN r.status = 'success' THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as success_rate,
@@ -99,13 +100,14 @@ analyticsRouter.get('/by-model', (req: Request, res: Response) => {
     FROM requests r
     LEFT JOIN models m ON m.platform = r.platform AND m.model_id = r.model_id
     WHERE r.created_at >= ?
-    GROUP BY r.platform, r.model_id
+    GROUP BY r.platform, r.model_id, r.key_id
     ORDER BY requests DESC
   `).all(FALLBACK_INPUT_PER_M, FALLBACK_OUTPUT_PER_M, since) as any[];
 
   res.json(rows.map(r => ({
     platform: r.platform,
     modelId: r.model_id,
+    keyId: r.key_id,
     displayName: r.display_name ?? r.model_id,
     requests: r.requests,
     successRate: Math.round(r.success_rate * 10) / 10,
@@ -126,20 +128,22 @@ analyticsRouter.get('/by-platform', (req: Request, res: Response) => {
 
   const rows = db.prepare(`
     SELECT
-      platform,
+      r.platform,
+      r.key_id,
       COUNT(*) as requests,
-      SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as success_rate,
-      AVG(latency_ms) as avg_latency_ms,
-      SUM(input_tokens) as total_input_tokens,
-      SUM(output_tokens) as total_output_tokens
-    FROM requests
-    WHERE created_at >= ?
-    GROUP BY platform
+      SUM(CASE WHEN r.status = 'success' THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as success_rate,
+      AVG(r.latency_ms) as avg_latency_ms,
+      SUM(r.input_tokens) as total_input_tokens,
+      SUM(r.output_tokens) as total_output_tokens
+    FROM requests r
+    WHERE r.created_at >= ?
+    GROUP BY r.platform, r.key_id
     ORDER BY requests DESC
   `).all(since) as any[];
 
   res.json(rows.map(r => ({
     platform: r.platform,
+    keyId: r.key_id,
     requests: r.requests,
     successRate: Math.round(r.success_rate * 10) / 10,
     avgLatencyMs: Math.round(r.avg_latency_ms),
