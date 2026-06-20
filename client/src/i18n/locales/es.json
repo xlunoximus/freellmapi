@@ -59,6 +59,7 @@
     "remove": "Quitar",
     "unknownError": "Error desconocido",
     "model": "Modelo",
+    "key": "Clave",
     "provider": "Proveedor",
     "success": "Aciertos",
     "failures": "Fallos"

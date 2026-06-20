@@ -59,6 +59,7 @@
     "remove": "Remove",
     "unknownError": "Unknown error",
     "model": "Model",
+    "key": "Key",
     "provider": "Provider",
     "success": "Success",
     "failures": "Failures"

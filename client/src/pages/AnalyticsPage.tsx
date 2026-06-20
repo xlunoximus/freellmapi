@@ -225,6 +225,7 @@ export default function AnalyticsPage() {
                         <TableHead className="text-right">{t('analytics.latency')}</TableHead>
                         <TableHead className="text-right">{t('analytics.inTokens')}</TableHead>
                         <TableHead className="text-right">{t('analytics.outTokens')}</TableHead>
+                        <TableHead className="text-right">{t('common.key')}</TableHead>
                         <TableHead className="text-right pr-4">{t('analytics.saved')}</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -239,6 +240,7 @@ export default function AnalyticsPage() {
                           <TableCell className="text-right tabular-nums">{m.avgLatencyMs} ms</TableCell>
                           <TableCell className="text-right tabular-nums">{formatTokens(m.totalInputTokens)}</TableCell>
                           <TableCell className="text-right tabular-nums">{formatTokens(m.totalOutputTokens)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{m.keyId ? `#${m.keyId}` : '—'}</TableCell>
                           <TableCell className="text-right tabular-nums pr-4">${(m.estimatedCost ?? 0).toFixed(2)}</TableCell>
                         </TableRow>
                       ))}
