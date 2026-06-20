@@ -59,6 +59,7 @@
     "remove": "Supprimer",
     "unknownError": "Erreur inconnue",
     "model": "Modèle",
+    "key": "Clé",
     "provider": "Fournisseur",
     "success": "Réussite",
     "failures": "Échecs"
