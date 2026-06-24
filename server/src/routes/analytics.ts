@@ -152,6 +152,82 @@ analyticsRouter.get('/by-platform', (req: Request, res: Response) => {
   })));
 });
 
+// Stats grouped by session (conversation)
+analyticsRouter.get('/by-session', (req: Request, res: Response) => {
+  const range = (req.query.range as string) ?? '7d';
+  const since = getSinceTimestamp(range);
+  const db = getDb();
+
+  const rows = db.prepare(`
+    SELECT
+      r.session_id,
+      r.session_label,
+      COUNT(*) as requests,
+      SUM(CASE WHEN r.status = 'success' THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as success_rate,
+      SUM(r.input_tokens) as total_input_tokens,
+      SUM(r.output_tokens) as total_output_tokens,
+      AVG(r.latency_ms) as avg_latency_ms,
+      MIN(r.created_at) as first_request_at,
+      MAX(r.created_at) as last_request_at
+    FROM requests r
+    WHERE r.created_at >= ? AND r.session_id IS NOT NULL
+    GROUP BY r.session_id
+    ORDER BY last_request_at DESC
+    LIMIT 100
+  `).all(since) as any[];
+
+  res.json(rows.map(r => ({
+    sessionId: r.session_id,
+    sessionLabel: r.session_label,
+    requests: r.requests,
+    successRate: Math.round(r.success_rate * 10) / 10,
+    totalInputTokens: r.total_input_tokens ?? 0,
+    totalOutputTokens: r.total_output_tokens ?? 0,
+    avgLatencyMs: Math.round(r.avg_latency_ms ?? 0),
+    firstRequestAt: r.first_request_at,
+    lastRequestAt: r.last_request_at,
+  })));
+});
+
+// Per-session request listing
+analyticsRouter.get('/session-requests', (req: Request, res: Response) => {
+  const sessionId = req.query.sessionId as string;
+  if (!sessionId) {
+    res.status(400).json({ error: 'sessionId query parameter is required' });
+    return;
+  }
+  const range = (req.query.range as string) ?? '7d';
+  const since = getSinceTimestamp(range);
+  const db = getDb();
+
+  const rows = db.prepare(`
+    SELECT
+      id, platform, model_id, key_id, status,
+      input_tokens, output_tokens, latency_ms, ttfb_ms,
+      error, requested_model, session_label, created_at
+    FROM requests
+    WHERE session_id = ? AND created_at >= ?
+    ORDER BY created_at ASC
+    LIMIT 500
+  `).all(sessionId, since) as any[];
+
+  res.json(rows.map(r => ({
+    id: r.id,
+    platform: r.platform,
+    modelId: r.model_id,
+    keyId: r.key_id,
+    status: r.status,
+    inputTokens: r.input_tokens,
+    outputTokens: r.output_tokens,
+    latencyMs: r.latency_ms,
+    ttfbMs: r.ttfb_ms,
+    error: r.error,
+    requestedModel: r.requested_model,
+    sessionLabel: r.session_label,
+    createdAt: r.created_at,
+  })));
+});
+
 // Timeline data
 analyticsRouter.get('/timeline', (req: Request, res: Response) => {
   const range = (req.query.range as string) ?? '7d';

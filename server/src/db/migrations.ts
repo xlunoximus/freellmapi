@@ -224,6 +224,7 @@ function createTables(db: Database.Database) {
   ensureModelsKeyIdColumn(db);
   ensureRequestTtfbColumn(db);
   ensureRequestRequestedModelColumn(db);
+  ensureRequestSessionColumns(db);
 }
 
 // `requested_model` is the model id the CLIENT pinned in the request body.
@@ -234,6 +235,16 @@ function ensureRequestRequestedModelColumn(db: Database.Database) {
   const columns = db.prepare('PRAGMA table_info(requests)').all() as { name: string }[];
   if (!columns.some(col => col.name === 'requested_model')) {
     db.prepare('ALTER TABLE requests ADD COLUMN requested_model TEXT').run();
+  }
+}
+
+function ensureRequestSessionColumns(db: Database.Database) {
+  const columns = db.prepare('PRAGMA table_info(requests)').all() as { name: string }[];
+  if (!columns.some(col => col.name === 'session_id')) {
+    db.prepare('ALTER TABLE requests ADD COLUMN session_id TEXT').run();
+  }
+  if (!columns.some(col => col.name === 'session_label')) {
+    db.prepare('ALTER TABLE requests ADD COLUMN session_label TEXT').run();
   }
 }
 

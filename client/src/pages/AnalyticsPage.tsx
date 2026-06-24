@@ -82,6 +82,18 @@ export default function AnalyticsPage() {
     queryFn: () => apiFetch<{ byCategory: any[]; byPlatform: any[]; detailed: any[] }>(`/api/analytics/error-distribution?range=${range}`),
   })
 
+  const { data: sessions = [] } = useQuery({
+    queryKey: ['analytics', 'by-session', range],
+    queryFn: () => apiFetch<any[]>(`/api/analytics/by-session?range=${range}`),
+  })
+
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
+  const { data: sessionRequests = [] } = useQuery({
+    queryKey: ['analytics', 'session-requests', selectedSessionId, range],
+    queryFn: () => apiFetch<any[]>(`/api/analytics/session-requests?sessionId=${selectedSessionId}&range=${range}`),
+    enabled: !!selectedSessionId,
+  })
+
   // Savings card shows ONE stable monthly figure regardless of the selected
   // range: the last-30-days data projected to a full month from its actual
   // span (a young install with 2 days of data shows 15x its 2-day total).
@@ -295,6 +307,90 @@ export default function AnalyticsPage() {
               </div>
             )}
           </Panel>
+
+          <div className="lg:col-span-2">
+            <Panel title="Sessions (by conversation)">
+              {sessions.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">{t('common.noData')}</p>
+              ) : (
+                <div>
+                  <div className="max-h-[360px] overflow-y-auto -mx-4">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="pl-4">Session</TableHead>
+                          <TableHead className="text-right">Requests</TableHead>
+                          <TableHead className="text-right">Success</TableHead>
+                          <TableHead className="text-right">In Tokens</TableHead>
+                          <TableHead className="text-right">Out Tokens</TableHead>
+                          <TableHead className="text-right pr-4">Last Request</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {sessions.map((s: any) => (
+                          <TableRow
+                            key={s.sessionId}
+                            className={`cursor-pointer ${selectedSessionId === s.sessionId ? 'bg-accent' : ''}`}
+                            onClick={() => setSelectedSessionId(selectedSessionId === s.sessionId ? null : s.sessionId)}
+                          >
+                            <TableCell className="pl-4 text-sm max-w-[240px] truncate">
+                              {s.sessionLabel || s.sessionId.slice(0, 12)}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">{s.requests}</TableCell>
+                            <TableCell className="text-right tabular-nums">{s.successRate}%</TableCell>
+                            <TableCell className="text-right tabular-nums">{formatTokens(s.totalInputTokens)}</TableCell>
+                            <TableCell className="text-right tabular-nums">{formatTokens(s.totalOutputTokens)}</TableCell>
+                            <TableCell className="text-right text-xs text-muted-foreground tabular-nums pr-4">
+                              {formatSqliteUtcToLocalTime(s.lastRequestAt)}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  {selectedSessionId && (
+                    <div className="mt-4 border-t pt-4">
+                      <h4 className="text-xs text-muted-foreground uppercase tracking-wider mb-2 px-1">
+                        Requests in this session
+                      </h4>
+                      <div className="max-h-[300px] overflow-y-auto -mx-4">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="pl-4">Model</TableHead>
+                              <TableHead className="text-right">In</TableHead>
+                              <TableHead className="text-right">Out</TableHead>
+                              <TableHead className="text-right">Latency</TableHead>
+                              <TableHead className="text-right">Status</TableHead>
+                              <TableHead className="text-right pr-4">Time</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {sessionRequests.map((r: any) => (
+                              <TableRow key={r.id}>
+                                <TableCell className="pl-4 text-xs">
+                                  <span className="text-muted-foreground">{r.platform}/</span>{r.modelId}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums text-xs">{r.inputTokens}</TableCell>
+                                <TableCell className="text-right tabular-nums text-xs">{r.outputTokens}</TableCell>
+                                <TableCell className="text-right tabular-nums text-xs">{r.latencyMs}ms</TableCell>
+                                <TableCell className={`text-right text-xs ${r.status === 'success' ? 'text-green-500' : 'text-destructive'}`}>
+                                  {r.status}
+                                </TableCell>
+                                <TableCell className="text-right text-xs text-muted-foreground tabular-nums pr-4">
+                                  {formatSqliteUtcToLocalTime(r.createdAt, { hour: '2-digit', minute: '2-digit' })}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </Panel>
+          </div>
         </div>
       </div>
     </div>

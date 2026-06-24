@@ -806,6 +806,21 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
   const rawSessionId = req.headers['x-session-id'];
   const sessionIdHeader = Array.isArray(rawSessionId) ? rawSessionId[0] : rawSessionId;
 
+  // Per-session analytics: group requests by conversation session. Used for
+  // the per-session token usage tab in the Playground dashboard.
+  let sessionId: string | null = null;
+  let sessionLabel: string | null = null;
+  if (sessionIdHeader) {
+    sessionId = `hdr:${sessionIdHeader}`;
+  } else {
+    const firstUser = messages.find(m => m.role === 'user');
+    const firstText = firstUser ? contentToString(firstUser.content ?? '') : '';
+    if (firstText) {
+      sessionId = crypto.createHash('sha1').update(firstText).digest('hex');
+      sessionLabel = firstText.replace(/\s+/g, ' ').trim().slice(0, 50);
+    }
+  }
+
   let resolvedChain: ResolvedChain | undefined;
   let strategyKey: string | undefined;
 
@@ -1043,7 +1058,7 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
                 latencyMs: Date.now() - start,
                 error: sanitizeProviderErrorMessage(String(msg)),
               });
-              logRequest(route.platform, route.modelId, route.keyId, 'error', estimatedInputTokens, totalOutputTokens, Date.now() - start, `in-band error frame: ${sanitizeProviderErrorMessage(String(msg))}`, ttfbMs, pinnedModelId);
+              logRequest(route.platform, route.modelId, route.keyId, 'error', estimatedInputTokens, totalOutputTokens, Date.now() - start, `in-band error frame: ${sanitizeProviderErrorMessage(String(msg))}`, ttfbMs, pinnedModelId, sessionId, sessionLabel);
               return;
             }
 
@@ -1188,7 +1203,7 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
             inputTokens: realInputTokens,
             outputTokens: realOutputTokens,
           });
-          logRequest(route.platform, route.modelId, route.keyId, 'success', realInputTokens, realOutputTokens, Date.now() - start, null, ttfbMs, pinnedModelId);
+          logRequest(route.platform, route.modelId, route.keyId, 'success', realInputTokens, realOutputTokens, Date.now() - start, null, ttfbMs, pinnedModelId, sessionId, sessionLabel);
           return;
         } catch (streamErr: any) {
           if (headerSent) {
@@ -1207,7 +1222,7 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
               latencyMs: Date.now() - start,
               error: sanitizeProviderErrorMessage(streamErr.message),
             });
-            logRequest(route.platform, route.modelId, route.keyId, 'error', estimatedInputTokens, totalOutputTokens, Date.now() - start, sanitizeProviderErrorMessage(streamErr.message), ttfbMs, pinnedModelId);
+            logRequest(route.platform, route.modelId, route.keyId, 'error', estimatedInputTokens, totalOutputTokens, Date.now() - start, sanitizeProviderErrorMessage(streamErr.message), ttfbMs, pinnedModelId, sessionId, sessionLabel);
             return;
           }
           // Headers never sent — bubble to the outer retry handler, which
@@ -1238,7 +1253,7 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
             latencyMs: Date.now() - start,
             error: 'empty completion',
           });
-          logRequest(route.platform, route.modelId, route.keyId, 'error', estimatedInputTokens, 0, Date.now() - start, 'empty completion (no content, no tool_calls)', null, pinnedModelId);
+          logRequest(route.platform, route.modelId, route.keyId, 'error', estimatedInputTokens, 0, Date.now() - start, 'empty completion (no content, no tool_calls)', null, pinnedModelId, sessionId, sessionLabel);
           skipKeys.add(`${route.platform}:${route.modelId}:${route.keyId}`);
           setCooldown(route.platform, route.modelId, route.keyId, getCooldownDurationForLimit(route.platform, route.modelId, route.keyId, { rpd: route.rpdLimit, tpd: route.tpdLimit }));
           recordRateLimitHit(route.modelDbId);
@@ -1310,7 +1325,7 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
           inputTokens: result.usage?.prompt_tokens ?? 0,
           outputTokens: result.usage?.completion_tokens ?? 0,
         });
-        logRequest(route.platform, route.modelId, route.keyId, 'success', result.usage?.prompt_tokens ?? 0, result.usage?.completion_tokens ?? 0, Date.now() - start, null, null, pinnedModelId);
+        logRequest(route.platform, route.modelId, route.keyId, 'success', result.usage?.prompt_tokens ?? 0, result.usage?.completion_tokens ?? 0, Date.now() - start, null, null, pinnedModelId, sessionId, sessionLabel);
         return;
       }
     } catch (err: any) {
@@ -1325,7 +1340,7 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
         latencyMs: latency,
         error: safeError,
       });
-      logRequest(route.platform, route.modelId, route.keyId, 'error', estimatedInputTokens, 0, latency, safeError, null, pinnedModelId);
+      logRequest(route.platform, route.modelId, route.keyId, 'error', estimatedInputTokens, 0, latency, safeError, null, pinnedModelId, sessionId, sessionLabel);
 
       if (isRetryableError(err)) {
         // Model-level 404 (removed/deprecated upstream): rule the whole model
