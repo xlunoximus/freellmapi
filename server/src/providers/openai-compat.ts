@@ -4,10 +4,13 @@ import type {
   ChatCompletionChunk,
   ChatToolCall,
   Platform,
+  TokenUsage,
 } from '@freellmapi/shared/types.js';
 import { BaseProvider, providerHttpError, type CompletionOptions } from './base.js';
 import { rescueInlineToolCalls } from '../lib/tool-call-rescue.js';
 import { repairToolArguments, toolSchemaMap } from '../lib/tool-args.js';
+import { contentToString } from '../lib/content.js';
+import { get_encoding, type Tiktoken } from '@dqbd/tiktoken';
 import { recordQuotaObservationsFromResponse, type QuotaObservationContext } from '../services/provider-quota.js';
 
 /**
@@ -91,6 +94,73 @@ export class OpenAICompatProvider extends BaseProvider {
     return this.keyless ? {} : { 'Authorization': `Bearer ${apiKey}` };
   }
 
+  private enc: Tiktoken | null = null;
+
+  private getEncoder(): Tiktoken {
+    if (!this.enc) {
+      this.enc = get_encoding('cl100k_base');
+    }
+    return this.enc!;
+  }
+
+  private countTokens(text: string): number {
+    try {
+      return this.getEncoder().encode(text).length;
+    } catch {
+      return Math.ceil(text.length / 4);
+    }
+  }
+
+  private countMessageTokens(messages: ChatMessage[]): number {
+    let count = 0;
+    for (const msg of messages) {
+      count += 4;
+      count += this.countTokens(msg.role);
+      count += this.countTokens(contentToString(msg.content));
+      if (msg.name) count += this.countTokens(msg.name);
+      if (msg.tool_calls) {
+        for (const tc of msg.tool_calls) {
+          count += this.countTokens(tc.function.name);
+          count += this.countTokens(tc.function.arguments);
+        }
+      }
+    }
+    count += 2;
+    return count;
+  }
+
+  private compressionLog(messages: ChatMessage[], before: number, after: number, max: number): void {
+    console.log(`[${this.name}] Context compressed: ${before} → ${after} tokens (max ${max}, dropped ${messages.length} messages)`);
+  }
+
+  private compressMessages(messages: ChatMessage[], maxTokens: number): ChatMessage[] {
+    const total = this.countMessageTokens(messages);
+    if (total <= maxTokens) return messages;
+
+    const sysIdx = messages.findIndex(m => m.role === 'system');
+    const sysMsg = sysIdx >= 0 ? messages[sysIdx] : null;
+
+    const tail: ChatMessage[] = [];
+    const rest = sysMsg ? messages.filter((_, i) => i !== sysIdx) : [...messages];
+
+    for (let i = rest.length - 1; i >= 0; i--) {
+      const candidate = [rest[i], ...tail];
+      if (this.countMessageTokens(sysMsg ? [sysMsg, ...candidate] : candidate) <= maxTokens) {
+        tail.unshift(rest[i]);
+      } else {
+        break;
+      }
+    }
+
+    const result = sysMsg ? [sysMsg, ...tail] : tail;
+    this.compressionLog(messages, total, this.countMessageTokens(result), maxTokens);
+    return result;
+  }
+
+  private makeUsage(promptTokens: number, completionTokens: number): TokenUsage {
+    return { prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: promptTokens + completionTokens };
+  }
+
   async chatCompletion(
     apiKey: string,
     messages: ChatMessage[],
@@ -98,6 +168,10 @@ export class OpenAICompatProvider extends BaseProvider {
     options?: CompletionOptions,
     quotaContext?: QuotaObservationContext,
   ): Promise<ChatCompletionResponse> {
+    const maxContext = Number(process.env.MAX_CONTEXT_TOKENS) || 128000;
+    const compressed = this.compressMessages(messages, maxContext);
+    const promptTokens = this.countMessageTokens(compressed);
+
     const res = await this.fetchWithTimeout(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -107,7 +181,7 @@ export class OpenAICompatProvider extends BaseProvider {
       },
       body: JSON.stringify({
         model: modelId,
-        messages,
+        messages: compressed,
         temperature: options?.temperature,
         max_tokens: options?.max_tokens,
         top_p: options?.top_p,
@@ -137,7 +211,7 @@ export class OpenAICompatProvider extends BaseProvider {
           created: Math.floor(Date.now() / 1000),
           model: modelId,
           choices: [{ index: 0, message: { role: 'assistant', content: null as unknown as string, tool_calls: rescued }, finish_reason: 'tool_calls' }],
-          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+          usage: this.makeUsage(promptTokens, 0),
         };
         out._routed_via = { platform: this.platform, model: modelId };
         return out;
@@ -149,16 +223,18 @@ export class OpenAICompatProvider extends BaseProvider {
     try {
       data = await res.json() as ChatCompletionResponse;
     } catch {
-      // A 200 whose body isn't a single JSON document — typically a base URL
-      // pointing at a non-OpenAI-compatible API (e.g. Ollama's native NDJSON
-      // /api endpoints instead of /v1, #189). Surface what's wrong instead of
-      // the raw JSON.parse position error.
       throw new Error(
         `${this.name} returned 200 with a non-JSON body — the endpoint is not OpenAI-compatible. ` +
         `Check the base URL (for Ollama use http://host:11434/v1, for llama.cpp/vLLM/LM Studio the /v1 path).`,
       );
     }
     normalizeChoices(data);
+
+    const completionText = data.choices
+      .map(c => contentToString(c.message.content))
+      .join('');
+    const completionTokens = this.countTokens(completionText);
+    data.usage = this.makeUsage(promptTokens, completionTokens);
     data._routed_via = { platform: this.platform, model: modelId };
     return data;
   }
@@ -170,6 +246,10 @@ export class OpenAICompatProvider extends BaseProvider {
     options?: CompletionOptions,
     quotaContext?: QuotaObservationContext,
   ): AsyncGenerator<ChatCompletionChunk> {
+    const maxContext = Number(process.env.MAX_CONTEXT_TOKENS) || 128000;
+    const compressed = this.compressMessages(messages, maxContext);
+    const promptTokens = this.countMessageTokens(compressed);
+
     const res = await this.fetchWithTimeout(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -179,7 +259,7 @@ export class OpenAICompatProvider extends BaseProvider {
       },
       body: JSON.stringify({
         model: modelId,
-        messages,
+        messages: compressed,
         temperature: options?.temperature,
         max_tokens: options?.max_tokens,
         top_p: options?.top_p,
@@ -213,7 +293,22 @@ export class OpenAICompatProvider extends BaseProvider {
       throw providerHttpError(res, `${this.name} API error ${res.status}: ${(err as any).error?.message ?? res.statusText}`);
     }
 
-    yield* this.readSseStream(res);
+    const chunks: ChatCompletionChunk[] = [];
+    for await (const chunk of this.readSseStream(res)) {
+      chunks.push(chunk);
+      yield chunk;
+    }
+
+    const completionText = chunks
+      .flatMap(c => c.choices)
+      .map(c => c.delta.content ?? '')
+      .join('');
+    const completionTokens = this.countTokens(completionText);
+    const usage = this.makeUsage(promptTokens, completionTokens);
+    const last = chunks[chunks.length - 1];
+    if (last) {
+      yield { ...last, choices: last.choices.map(c => ({ ...c, delta: {}, finish_reason: c.finish_reason })), usage } as ChatCompletionChunk & { usage: TokenUsage };
+    }
   }
 
   async validateKey(apiKey: string, quotaContext?: QuotaObservationContext): Promise<boolean> {

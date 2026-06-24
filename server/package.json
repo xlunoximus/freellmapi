@@ -20,6 +20,7 @@
     "express": "^5.1.0",
     "helmet": "^8.1.0",
     "socks-proxy-agent": "^10.0.0",
+    "@dqbd/tiktoken": "^1.0.15",
     "undici": "^6.21.0",
     "zod": "^3.24.4"
   },
