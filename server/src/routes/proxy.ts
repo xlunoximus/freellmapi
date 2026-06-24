@@ -1168,7 +1168,7 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
           res.write('data: [DONE]\n\n');
           res.end();
 
-          const streamUsage = usageChunk?.usage ?? {};
+          const streamUsage = (usageChunk as { usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } } | null)?.usage ?? {};
           const realInputTokens = streamUsage.prompt_tokens ?? estimatedInputTokens + injectedHandoffTokens;
           const realOutputTokens = streamUsage.completion_tokens ?? totalOutputTokens;
           const realTotal = streamUsage.total_tokens ?? realInputTokens + realOutputTokens;
