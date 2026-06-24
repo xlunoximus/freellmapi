@@ -1050,10 +1050,10 @@ proxyRouter.post('/chat/completions', async (req: Request, res: Response) => {
             if (anyChunk.id) lastMeta = { id: anyChunk.id, model: anyChunk.model, created: anyChunk.created };
 
             const choice = anyChunk.choices?.[0];
+            // Capture real token counts from tiktoken regardless of whether
+            // usage arrives in a choice-less frame or bundled with choices.
+            if (anyChunk.usage) usageChunk = anyChunk;
             if (!choice) {
-              // Usage-only frame (stream_options.include_usage) — held and
-              // re-emitted after our finish chunk to preserve OpenAI ordering.
-              if (anyChunk.usage) usageChunk = anyChunk;
               continue;
             }
 
